@@ -1,0 +1,12 @@
+Modskinlol/
+Modskinlol_Setup_11.exe
+
+OwnSkinTool/data/
+OwnSkinTool/__pycache__/
+*.pyc
+*.pyo
+*.log
+*.pid
+
+.DS_Store
+Thumbs.db
