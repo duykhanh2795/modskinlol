@@ -28,6 +28,7 @@ INJECTION_DIR = DATA_DIR / "injection"
 INJECTION_MODS_DIR = INJECTION_DIR / "mods"
 OVERLAY_DIR = INJECTION_DIR / "overlay"
 LOGS_DIR = DATA_DIR / "logs"
+CACHE_BACKUP_DIR = ROOT / "cache" / "Modskinlol"
 CONFIG_PATH = DATA_DIR / "config.json"
 CACHE_INDEX_PATH = DATA_DIR / "cached_skins_index.json"
 RUNOVERLAY_CONFIG = INJECTION_DIR / "runoverlay.config"
@@ -446,75 +447,138 @@ def import_cmd(args: argparse.Namespace) -> None:
     log(f"Imported mod '{name}' into {target}")
 
 
+def cached_skin_packages(cache_root: Path) -> list[Path]:
+    packages: dict[str, Path] = {}
+    for path in cache_root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in (".zip", ".fantome"):
+            continue
+        current = packages.get(path.stem)
+        if current is None:
+            packages[path.stem] = path
+            continue
+        current_rank = (len(current.parts), 0 if current.suffix.lower() == ".fantome" else 1, str(current))
+        path_rank = (len(path.parts), 0 if path.suffix.lower() == ".fantome" else 1, str(path))
+        if path_rank < current_rank:
+            packages[path.stem] = path
+    return sorted(packages.values(), key=lambda p: str(p))
+
+
 def find_cached_skin_zip(skin_id: str) -> Path:
     skin_id = safe_name(str(skin_id))
-    cache_root = cached_skin_root()
-    if not cache_root.exists():
-        raise SystemExit(f"Modskinlol skin cache not found: {cache_root}")
-    matches = list(cache_root.rglob(f"{skin_id}.zip"))
+    roots = cached_skin_roots()
+    if not roots:
+        checked = ", ".join(str(root / "skins") for root in modskinlol_local_roots())
+        raise SystemExit(f"Modskinlol skin cache not found. Checked: {checked}")
+    matches = []
+    for cache_root in roots:
+        matches += list(cache_root.rglob(f"{skin_id}.zip"))
+        matches += list(cache_root.rglob(f"{skin_id}.fantome"))
     if not matches:
-        raise SystemExit(f"Cached skin zip not found for skin ID {skin_id}")
+        raise SystemExit(f"Cached skin package not found for skin ID {skin_id}")
     matches.sort(key=lambda p: (len(p.parts), str(p)))
     return matches[0]
 
 
+def modskinlol_local_roots() -> list[Path]:
+    local = Path(os.environ.get("LOCALAPPDATA", ""))
+    return [
+        CACHE_BACKUP_DIR,
+        local / "Modskinlol",
+        local / "modskinlol",
+    ]
+
+
+def unique_existing_child_roots(child: str) -> list[Path]:
+    roots = []
+    seen = set()
+    for root in modskinlol_local_roots():
+        path = root / child
+        key = str(path).lower()
+        if key in seen or not path.exists():
+            continue
+        roots.append(path)
+        seen.add(key)
+    return roots
+
+
+def cached_skin_roots() -> list[Path]:
+    return unique_existing_child_roots("skins")
+
+
+def resource_roots() -> list[Path]:
+    return unique_existing_child_roots("resources")
+
+
 def cached_skin_root() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", "")) / "modskinlol" / "skins"
+    roots = cached_skin_roots()
+    return roots[0] if roots else CACHE_BACKUP_DIR / "skins"
 
 
 def resources_root() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", "")) / "modskinlol" / "resources"
+    roots = resource_roots()
+    return roots[0] if roots else CACHE_BACKUP_DIR / "resources"
 
 
 def load_skin_name_resources() -> dict[str, dict]:
-    root = resources_root()
     names: dict[str, dict] = {}
-    if not root.exists():
+    roots = resource_roots()
+    if not roots:
         return names
-    for path in root.glob("*/skin_ids.json"):
-        lang = path.parent.name.lower()
-        try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except Exception:
-            continue
-        for skin_id, name in data.items():
-            item = names.setdefault(str(skin_id), {"aliases": []})
-            clean = str(name).strip()
-            if not clean:
+    for root in reversed(roots):
+        for path in root.glob("*/skin_ids.json"):
+            lang = path.parent.name.lower()
+            try:
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
+            except Exception:
                 continue
-            item["aliases"].append(clean)
-            if lang == "en":
-                item["en"] = clean
-            elif lang == "vi":
-                item["vi"] = clean
-            elif "default" not in item:
-                item["default"] = clean
+            for skin_id, name in data.items():
+                item = names.setdefault(str(skin_id), {"aliases": []})
+                clean = str(name).strip()
+                if not clean:
+                    continue
+                item["aliases"].append(clean)
+                if lang == "en":
+                    item["en"] = clean
+                elif lang == "vi":
+                    item["vi"] = clean
+                elif "default" not in item:
+                    item["default"] = clean
     return names
 
 
-def cached_skin_info(zip_path: Path, resource_names: Optional[dict[str, dict]] = None) -> dict:
-    skin_id = zip_path.stem
+def cached_skin_info(package_path: Path, resource_names: Optional[dict[str, dict]] = None) -> dict:
+    skin_id = package_path.stem
     resource = (resource_names or {}).get(skin_id, {})
     resource_name = resource.get("en") or resource.get("vi") or resource.get("default") or ""
+    champion_id = ""
+    champion_name = ""
+    if skin_id.isdigit():
+        champion_id = str(int(skin_id) // 1000)
+        champion_resource = (resource_names or {}).get(f"{champion_id}000", {})
+        champion_name = champion_resource.get("en") or champion_resource.get("vi") or champion_resource.get("default") or ""
+        if not champion_name and champion_resource.get("aliases"):
+            champion_name = str(champion_resource["aliases"][0])
+    fallback_name = f"{champion_name} Skin {skin_id}" if champion_name else f"Skin {skin_id}"
     info = {
         "id": skin_id,
-        "name": resource_name or f"Skin {skin_id}",
+        "name": resource_name or fallback_name,
         "author": "",
-        "aliases": sorted(set(resource.get("aliases") or [])),
-        "path": str(zip_path),
+        "aliases": sorted(set((resource.get("aliases") or []) + ([champion_name] if champion_name else []))),
+        "path": str(package_path),
     }
     try:
-        with zipfile.ZipFile(zip_path) as zf:
+        with zipfile.ZipFile(package_path) as zf:
             candidates = [name for name in zf.namelist() if name.replace("\\", "/").lower() == "meta/info.json"]
             if not candidates:
                 return info
             data = json.loads(zf.read(candidates[0]).decode("utf-8-sig", errors="ignore"))
             meta_name = str(data.get("Name") or data.get("name") or "").strip()
-            if meta_name:
-                info["name"] = meta_name
+            if meta_name and not meta_name.isdigit():
                 aliases = set(info.get("aliases") or [])
                 aliases.add(meta_name)
                 info["aliases"] = sorted(aliases)
+                if not resource_name:
+                    info["name"] = meta_name
             info["author"] = str(data.get("Author") or data.get("author") or "")
     except Exception as exc:
         info["error"] = str(exc)
@@ -523,13 +587,16 @@ def cached_skin_info(zip_path: Path, resource_names: Optional[dict[str, dict]] =
 
 def cached_skin_signature(paths: list[Path]) -> dict:
     latest = 0
-    resource_paths = list(resources_root().glob("*/skin_ids.json"))
+    resource_paths = []
+    for root in resource_roots():
+        resource_paths += list(root.glob("*/skin_ids.json"))
     for path in paths + resource_paths:
         try:
             latest = max(latest, int(path.stat().st_mtime))
         except OSError:
             continue
-    return {"count": len(paths), "resources": len(resource_paths), "latest_mtime": latest, "index_version": 2}
+    root_sig = [str(root) for root in cached_skin_roots()] + [str(root) for root in resource_roots()]
+    return {"count": len(paths), "resources": len(resource_paths), "latest_mtime": latest, "roots": root_sig, "index_version": 7}
 
 
 def load_cached_skin_index(paths: list[Path]) -> list[dict]:
@@ -548,10 +615,15 @@ def load_cached_skin_index(paths: list[Path]) -> list[dict]:
 
 
 def list_cached_skins(limit: int = 0, query: str = "") -> list[dict]:
-    cache_root = cached_skin_root()
-    if not cache_root.exists():
-        raise SystemExit(f"Modskinlol skin cache not found: {cache_root}")
-    paths = sorted(cache_root.rglob("*.zip"))
+    roots = cached_skin_roots()
+    if not roots:
+        checked = ", ".join(str(root / "skins") for root in modskinlol_local_roots())
+        raise SystemExit(f"Modskinlol skin cache not found. Checked: {checked}")
+    by_id: dict[str, Path] = {}
+    for cache_root in reversed(roots):
+        for path in cached_skin_packages(cache_root):
+            by_id[path.stem] = path
+    paths = sorted(by_id.values(), key=lambda p: str(p))
     skins = load_cached_skin_index(paths)
     query_lower = query.lower().strip()
     results = []

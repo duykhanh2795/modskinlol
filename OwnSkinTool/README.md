@@ -91,8 +91,16 @@ python .\OwnSkinTool\ownskin.py import "D:\mods\MyExtractedMod" --name my_mod
 
 ## Import From Local Modskinlol Cache
 
-If `C:\Users\<you>\AppData\Local\modskinlol\skins` contains cached skin packages,
-you can import one by skin ID:
+OwnSkinTool reads cached skin packages from these locations, in order:
+
+1. `OwnSkinTool\cache\Modskinlol`
+2. `C:\Users\<you>\AppData\Local\Modskinlol`
+3. `C:\Users\<you>\AppData\Local\modskinlol`
+
+This lets you keep a stable backup on drive `F:` even if a future Modskinlol version
+changes or clears the AppData cache. Cache packages can be `.fantome` or `.zip`.
+
+If a cache location contains skin packages, you can import one by skin ID:
 
 ```powershell
 python .\OwnSkinTool\ownskin.py import-cache 39037 --name mythmaker_irelia

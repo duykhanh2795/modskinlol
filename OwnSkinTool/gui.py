@@ -302,7 +302,7 @@ class OwnSkinGui(tk.Tk):
                 self.after(0, lambda: status.set(f"Failed to load cache: {exc}"))
                 return
             self.after(0, lambda: state.update({"skins": skins}))
-            self.after(0, lambda: populate(skins))
+            self.after(0, apply_filter)
 
         entry.bind("<KeyRelease>", apply_filter)
         tree.bind("<Double-1>", lambda _event: quick_run_selected())

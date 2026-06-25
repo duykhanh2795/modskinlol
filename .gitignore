@@ -2,6 +2,7 @@ Modskinlol/
 Modskinlol_Setup_11.exe
 
 OwnSkinTool/data/
+OwnSkinTool/cache/
 OwnSkinTool/__pycache__/
 *.pyc
 *.pyo
